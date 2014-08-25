@@ -1,14 +1,17 @@
 {
-  "name": "kss-node-template",
-  "auth": "eightyfour",
-  "email": "eightyfour@thinkuseful.de",
-  "description": "KSS node template with sample.html and canny support",
-  "version": "0.0.1",
-  "readmeFilename": "README.md",
-  "keywords": [
-    "kss",
-    "kss-node",
-    "template"
-  ],
-  "license": "MIT"
+    "name": "kss-node-template",
+    "auth": "eightyfour",
+    "email": "eightyfour@thinkuseful.de",
+    "description": "KSS node template with sample.html and canny support",
+    "version": "0.0.1",
+    "readmeFilename": "README.md",
+    "keywords": [
+        "kss",
+        "kss-node",
+        "template"
+    ],
+    "dependencies": {
+        "canny" : "git://github.com/eightyfour/canny.git"
+    },
+    "license": "MIT"
 }
