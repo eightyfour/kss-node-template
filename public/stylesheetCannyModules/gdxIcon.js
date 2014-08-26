@@ -1,4 +1,4 @@
-canny.add('gdxIcon', (function (canny) {
+canny.add('gdxIcon', (function () {
     "use strict";
 
     /**

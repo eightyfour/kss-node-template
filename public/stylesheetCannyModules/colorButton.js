@@ -1,4 +1,4 @@
-canny.add('colorButton', (function (canny) {
+canny.add('colorButton', (function () {
     "use strict";
 
     /**
