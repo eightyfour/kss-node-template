@@ -232,9 +232,16 @@ body {
           text-align: right;
         }
       }
-      &.kss-active > a {
-        border-bottom-color: @key-color;
-        color: @text-color;
+      &.kss-active{
+
+         > a {
+          border-bottom-color: @key-color;
+          color: @text-color;
+        }
+        // show submenu only if active
+        .kss-menu-child {
+          display: block;
+        }
       }
     }
   }

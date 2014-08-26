@@ -342,14 +342,40 @@
  * Or pass a comma separated module list for activate more module #viewToShow,otherView
  *
  * TODO made it possible to summarize views with one identifier.
- * Instead of call: gdom.flowControl.show('view1', 'view2', 'view3') call gdom.flowControl.show('view').
+ * Instead of call: canny.flowControl.show('view1', 'view2', 'view3') call canny.flowControl.show('view').
+ *
+ * TODO add a hide method that just hide the specific element.
+ *
+ * TODO handle the fade in and out via CSS classes - and use transitions for it
  */
 (function () {
     "use strict";
 
-    var flowControl = (function () {
+    /**
+     * wraps transitionend event vendor implementation
+     */
+    function onTransitionEndOnce(node, cb) {
+        var event = (function () {
+                if (node.style.webkitTransition !== undefined) {
+                    return 'webkitTransitionEnd';
+                } else if (node.style.transition !== undefined) {
+                    return 'transitionend';
+                }
+            }()),
+            listener = function(e) {
+                e.target.removeEventListener(e.type, listener);
+                cb(e);
+            };
+        if (event) {
+            node.addEventListener(event, listener, false);
+        } else {
+            cb();
+        }
+    }
 
-        var modViews = {}, // saves module views
+    var flowControlInstance = function (fcInstanceName) {
+        var instanceName = fcInstanceName,
+            modViews = {}, // saves module views
             getViewAnchor = function () {
                 var hash = location.hash || null, hashSub;
                 if (hash) {
@@ -358,83 +384,185 @@
                 }
                 return hash;
             },
-            showInitialView = getViewAnchor(),
-            fc = {
-                // get the parent module from the given viewName
-                getParentNode : function (viewName) {
-                    var queue = Object.keys(modViews), l, i;
-                    l = queue.length;
-                    for (i = 0; i < l; i++) {
-                        if (modViews[queue[i]].hasChildrenWithName(viewName)) {
-                            return modViews[queue[i]];
+            getAllModuleChildrens = function (cNode) {
+                // TODO test selector if we have more than one module in canny-mod
+                var children = cNode.querySelectorAll('[canny-mod*=' + instanceName + ']'),
+                    fc_childNodes = {};
+//                            if (cNode.hasChildNodes()) {
+//                                [].slice.call(cNode.children).forEach(findChildren);
+//                            }
+                [].slice.call(children).forEach(function (mod) {
+                    var attrValue, view;
+                    // TODO read attributes should be a part of canny functionality
+                    attrValue = mod.getAttribute('canny-var').split("\'").join('\"');
+                    if (/:/.test(attrValue)) {
+                        // could be a JSON
+                        view = JSON.parse(attrValue).view;
+                    } else {
+                        view = attrValue;
+                    }
+                    fc_childNodes[view] = mod;
+                });
+                return fc_childNodes;
+            },
+            /**
+             * Each flowControl node will end up in a flowControlModule.
+             *
+             * @param node
+             * @param attr
+             * @returns {{hasChildrenWithName: hasChildrenWithName, getViewName: getViewName, show: show, hide: hide, fadeOut: fadeOut, getNode: getNode, fadeIn: fadeIn}}
+             */
+            flowControlModule = function (node, attr) {
+                var flowControlChildNodes = {},
+                    async = false,
+                    parentViews = fc.getParentNode(attr.view);
+                // saves all children in a object
+                flowControlChildNodes = getAllModuleChildrens(node);
+//                    console.log('flowControlChildNodes:', flowControlChildNodes);
+                return {
+                    hasChildrenWithName : function (viewName) {
+                        return flowControlChildNodes.hasOwnProperty(viewName);
+                    },
+                    getViewName : function () {
+                        return attr.view;
+                    },
+                    display : function () {
+                        // don't call parents
+                        // don't fade in
+                        node.style.display = '';
+                    },
+                    show : function (cb) {
+                        if (parentViews) {
+                            parentViews.forEach(function (fc_module) {
+//                                console.log('parentViews', fc_module.getViewName());
+                                fc_module.display();
+                            });
+                        }
+                        if (!async && attr.hasOwnProperty('async')) {
+                            canny.async.loadHTML(node, {url : attr.async}, function () {
+                                node.style.display = '';
+                                cb();
+                            });
+                            async = true;
+                        } else {
+                            node.style.display = '';
+                            cb && cb();
+                        }
+                    },
+                    hide : function () {
+                        node.style.display = 'none';
+                    },
+                    fadeOut : function (cb) {
+                        fc.fadeOut(node, cb || function () {});
+                    },
+                    getNode : function () {
+                        return node;
+                    },
+                    fadeIn : function (cb) {
+                        if (parentViews) {
+                            parentViews.forEach(function (fc_module) {
+//                                console.log('parentViews', fc_module.getViewName());
+                                fc_module.display();
+                            });
+                        }
+                        if (!async && attr.hasOwnProperty('async')) {
+                            canny.async.loadHTML(node, {url : attr.async}, function () {
+                                fc.fadeIn(node,  cb || function () {});
+                            });
+                            async = true;
+                        } else {
+                            fc.fadeIn(node,  cb || function () {});
                         }
                     }
-                    return null;
+                };
+
+            },
+            showInitialView = getViewAnchor(),
+            fc = {
+                // get all parent modules from the given viewName
+                getParentNode : function (viewName) {
+                    var queue = Object.keys(modViews), l, i, parents = [];
+                    l = queue.length;
+                    for (i = 0; i < l; i++) {
+                        // TODO
+                        if (viewName !== queue[i] && modViews[queue[i]][0].hasChildrenWithName(viewName)) {
+                            parents.push(modViews[queue[i]][0]);
+                        }
+                    }
+                    return parents.length === 0 ? null : parents;
                 },
                 // passes a view list and complete the list with all parent node names
                 addParents : function (views) {
                     var extViews = views, i, l, pNode,
-                            pushExtViews = function (name) {
-                                if (extViews.indexOf(name) === -1) {
-                                    extViews.push(name);
-                                }
-                            },
-                            addParentView = function (viewName) {
-                                var pViewName = fc.getParentNode(viewName);
-                                if (pViewName) {
-                                    // TOOD while has parent add it to the extViews
-                                    pushExtViews(pViewName.getViewName());
-                                    addParentView(pViewName.getViewName());
-                                }
-                            };
+                        pushExtViews = function (name) {
+                            if (extViews.indexOf(name) === -1) {
+                                extViews.push(name);
+                            }
+                        },
+                        addParentView = function (viewName) {
+                            // TODO call ends always with null - viewName is top parent
+                            var pViewName = fc.getParentNode(viewName);
+//                            console.log('viewName: ' + viewName, 'pViewName ' + pViewName );
+                            if (pViewName) {
+                                pViewName.forEach(function (fc_module) {
+                                    // TODO while has parent add it to the extViews
+                                    pushExtViews(fc_module.getViewName());
+                                    addParentView(fc_module.getViewName());
+                                });
+                            }
+                        };
                     l = views.length;
                     for (i = 0; i < l; i++) {
                         pNode = fc.getParentNode(views[i]);
                         if (pNode) {
-                            pushExtViews(pNode.getViewName());
-                            // so far we have parents do it recursive
-                            addParentView(pNode.getViewName());
+                            pNode.forEach(function (fc_module) {
+                                pushExtViews(fc_module.getViewName());
+                                // so far we have parents do it recursive
+                                // TODO not needed each parent will do it by own -
+                                addParentView(fc_module.getViewName());
+                            });
                         }
                     }
                     return extViews;
                 },
                 fadeOut : function (node, cb) {
-                    var opacity = node.style.opacity || 1,
-                            fade = function (op) {
-                                if (op > 0) {
-                                    node.style.opacity = op;
 
-                                    setTimeout(function () {
-                                        fade(op - 0.1);
-                                    }, 30);
-                                } else {
-                                    node.style.display = 'none';
-                                    cb();
-                                }
-                            };
-                    fade(opacity);
-                    console.log('fadeOut', node);
+                    if(node.style.display === 'none') {
+                        cb();
+                    } else {
+                        node.classList.add('c-flowControl');
+                        node.classList.add('fade-out');
+
+                        setTimeout(function () {
+                            node.style.display = 'none';
+                            node.classList.remove('c-flowControl');
+                            node.classList.remove('fade-out');
+                            cb();
+                        }, 300);
+                    }
+
                 },
                 fadeIn : function (node, cb) {
-                    var opacity = node.opacity || 0,
-                            fade = function (op) {
-                                if (op <= 1) {
-                                    node.style.opacity = op;
-                                    setTimeout(function () {
-                                        fade(op + 0.1);
-                                    }, 30);
-                                } else {
-                                    cb();
-                                }
-                            };
-                    if (node.style.display === 'none') {
-                        node.style.opacity = opacity;
-                        node.style.display = '';
-                        fade(opacity);
-                    } else {
-                        node.style.opacity = 1;
-                        console.log('fadeIn', node);
-                    }
+                    // TODO: fade in does not work properly
+                    node.style.display = '';
+                    node.classList.add('c-flowControl');
+                    node.classList.add('fade-in');
+
+                    setTimeout(function() {
+                        node.classList.remove('c-flowControl');
+                        node.classList.remove('fade-in');
+                        cb();
+
+                        // trigger reflow to fix the black boxes issue FTTWO-1249
+                        // TODO: check if this can be avoided or
+                        var box = document.querySelector('.t-centerBox-content');
+                        if (box) {
+                            box.style.opacity = 0.99;
+                            setTimeout(function() {
+                                box.style.opacity = 1;
+                            }, 50);
+                        }
+                    }, 300);
                 }
             },
             ext = {
@@ -485,181 +613,359 @@
                         }
                     };
                 }
-            };
-
-        return {
-            mod : modViews, // part of api
-            ready : function () {
-                var modNames, i, l;
-                if (showInitialView) {
-                    modNames = Object.keys(this.mod);
-                    l = modNames.length;
-                    // check if showInitialView contains a registered module
-                    for (i = 0; i < l; i++) {
-                        if (showInitialView.indexOf(modNames[i]) !== -1) {
-                            this.showImmediately.apply(null, showInitialView);
-                            break;
+            },
+            /**
+             *
+             * @type {{mod: {}, createNewInstance: createNewInstance, ready: ready, add: add, show: show, fadeIn: fadeIn, showImmediately: showImmediately, overlay: overlay}}
+             */
+                api = {
+                mod : modViews, // part of api
+                /**
+                 * this method could be used to create new instances of flowControl (only needed if you
+                 * load this script directly without require)
+                 * @param name (unique module name)
+                 **/
+                createNewInstance : function (name) {
+                    return flowControl(name);
+                },
+                ready : function () {
+                    var modNames, i, l;
+                    if (showInitialView) {
+                        modNames = Object.keys(modViews);
+                        l = modNames.length;
+                        // check if showInitialView contains a registered module
+                        for (i = 0; i < l; i++) {
+                            if (showInitialView.indexOf(modNames[i]) !== -1) {
+                                this.showImmediately.apply(null, showInitialView);
+                                break;
+                            }
                         }
                     }
-                }
-            },
-            add : function (node, attr) {    // part of api
-
-                modViews[attr.view] = (function (node, parentView) {
-                    var flowControlChildNodes = {},
-                    // TODO do it with a querySelectorAll
-                        findChildren = function (cNode) {
-                            if (cNode.hasChildNodes()) {
-                                [].slice.call(cNode.children).forEach(findChildren);
-                            }
-                            var modAttr = cNode.getAttribute('gd-module'), attrValue, view;
-                            if (/flowControl/.test(modAttr)) {
-                                console.log(cNode);
-                                // TODO read attributes should be part gdom functionality
-                                attrValue = cNode.getAttribute('gd-attr').split("\'").join('\"');
-                                if (/:/.test(attrValue)) {
-                                    // could be a JSON
-                                    view = JSON.parse(attrValue).view;
-                                } else {
-                                    view = attrValue;
+                },
+                /**
+                 *
+                 * @param node
+                 * @param attr {{view:(identifier),}}
+                 */
+                add : function (node, attr) {    // part of api
+                    if (!modViews[attr.view]) {
+                        modViews[attr.view] = [];
+                    }
+                    modViews[attr.view].push(flowControlModule(node, attr));
+                },
+                /**
+                 * @deprecated will handle showImmediately in near future
+                 */
+                show : function () {
+                    api.fadeIn.apply(this, arguments);
+                },
+                /**
+                 * @param name (arguments list of views to show)
+                 */
+                fadeIn : function (name) {
+                    var showMods = [].slice.call(arguments),
+                        queue = Object.keys(modViews),
+                        queueCount = 0,// = queue.length,
+                        fadeIn = function () {
+                            showMods.forEach(function (module) {
+                                if (modViews.hasOwnProperty(module)) {
+                                    modViews[module].forEach(function (obj) {
+                                        obj.fadeIn(function () {
+                                            // TODO remove
+//                                                console.log('FADE IN DONE');
+                                            // TODO count callbacks and handle it ?
+                                        });
+                                    });
                                 }
-                                flowControlChildNodes[view] = cNode;
+                            });
+                            // if last param is function than handle it as callback
+                            if (typeof showMods[showMods.length - 1] === 'function') {
+                                showMods[showMods.length - 1]();
                             }
                         };
-                    // saves all children in a object
-                    [].slice.call(node.children).forEach(findChildren);
+                    showMods = fc.addParents(showMods);
+                    queue.forEach(function (view) {
+                        queueCount += modViews[view].length;
+                    });
+                    // iterate over all registered modules
+                    queue.forEach(function (view) {
+                        // iterate over all instances of the same view
+                        modViews[view].forEach(function (obj) {
+                            // hide all (except incoming and parents) TODO but only the parents of the module
+                            if (showMods.indexOf(view) === -1) {
+                                obj.fadeOut(function () {
+                                    queueCount--;
+                                    if (queueCount <= 0) {
+                                        fadeIn();
+                                    }
+                                });
+                            } else {
+                                queueCount--;
+                                if (queueCount <= 0) {
+                                    fadeIn();
+                                }
+                            }
+                        });
+                    });
+                },
+                /**
+                 * @deprecated use show instead
+                 * @param name
+                 */
+                showImmediately : function (name) {    // module specific
+                    var showMods = [].slice.call(arguments),
+                        queue = Object.keys(modViews),
+                        queueCount = 0,
+                        countCb = (function () {
+                            var cb, length = 0;
+                            // if last param is function than handle it as callback
+                            if (typeof showMods[showMods.length - 1] === 'function') {
+                                cb = showMods[showMods.length - 1];
+                            }
+                            return {
+                                countUp : function (num) {
+                                    length += num;
+                                },
+                                reduce : function () {
+                                    length--;
+                                    if (cb && length <= 0) {
+                                        cb();
+                                    }
+                                }
+                            };
+                        }()),
+                        show = function () {
+                            showMods.forEach(function (module) {
+                                if (modViews.hasOwnProperty(module)) {
+                                    countCb.countUp(modViews[module].length);
+                                    modViews[module].forEach(function (obj) {
+                                        obj.show(countCb.reduce);
+                                    });
+                                }
+                            });
+                        };
+                    showMods = fc.addParents(showMods);
+                    // hide all (except incoming)
+                    queue.forEach(function (view) {
+                        queueCount += modViews[view].length;
+                        modViews[view].forEach(function (obj) {
+                            queueCount--;
+                            if (showMods.indexOf(obj) === -1) {
+                                obj.hide();
+                            }
+                            if (queueCount <= 0) {
+                                show();
+                            }
+                        });
+                    });
+                },
+                overlay : function (name) {
+                    var node;
+                    // it's own module?
+                    if (modViews.hasOwnProperty(name)) {
+                        node = modViews[name].getNode();
+                    } else {
+                        node = document.getElementById(name);
+                    }
 
                     return {
-                        hasChildrenWithName : function (viewName) {
-                            return flowControlChildNodes.hasOwnProperty(viewName);
-                        },
-                        getViewName : function () {
-                            return attr.view;
-                        },
-                        show : function () {
-                            parentView && parentView.show();
-                            node.style.display = '';
-                        },
-                        hide : function () {
-                            node.style.display = 'none';
-                        },
-                        fadeOut : function (cb) {
-                            fc.fadeOut(node, cb || function () {});
-                        },
-                        getNode : function () {
-                            return node;
-                        },
-                        fadeIn : function (cb) {
-                            parentView && parentView.show();  // do show fadeIn has flickering
-                            fc.fadeIn(node,  cb || function () {});
+                        by : function (name, text) {
+                            return ext[name](node, text);
                         }
                     };
-
-                }(node, fc.getParentNode(attr.view)));
-            },
-            // TODO rename it to fadeIn
-            show : function (name) {    // module specific
-                var showMods = [].slice.call(arguments),
-                    queue = Object.keys(modViews),
-                    queueCount = queue.length,
-                    fadeIn = function () {
-                        showMods.forEach(function (module) {
-                            if (modViews.hasOwnProperty(module)) {
-                                modViews[module].fadeIn(function () {
-                                    // TODO remove
-                                    console.log('FADE IN DONE');
-                                });
-                            }
-                        });
-                    };
-                showMods = fc.addParents(showMods);
-                // hide all (except incoming)
-
-                queue.forEach(function (obj) {
-                    if (showMods.indexOf(obj) === -1) {
-                        modViews[obj].fadeOut(function () {
-                            queueCount--;
-                            if (queueCount <= 0) {
-                                // FADE IN
-                                fadeIn();
-                            }
-                        });
-                    } else {
-                        queueCount--;
-                        if (queueCount <= 0) {
-                            fadeIn();
-                        }
-                    }
-                });
-            },
-            // rename it to show
-            showImmediately : function (name) {    // module specific
-                var showMods = [].slice.call(arguments),
-                    queue = Object.keys(modViews),
-                    queueCount = queue.length,
-                    show = function () {
-                        showMods.forEach(function (module) {
-                            if (modViews.hasOwnProperty(module)) {
-                                modViews[module].show();
-                            }
-                        });
-                    };
-                showMods = fc.addParents(showMods);
-                // hide all (except incoming)
-                queue.forEach(function (obj) {
-                    queueCount--;
-                    if (showMods.indexOf(obj) === -1) {
-                        modViews[obj].hide();
-                    }
-                    if (queueCount <= 0) {
-                        show();
-                    }
-                });
-            },
-            overlay : function (name) {
-                var node;
-                // it's own module?
-                if (modViews.hasOwnProperty(name)) {
-                    node = modViews[name].getNode();
-                } else {
-                    node = document.getElementById(name);
                 }
-
-                return {
-                    by : function (name, text) {
-                        return ext[name](node, text);
-                    }
-                };
+            };
+        return api;
+    },
+    flowControl = (function () {
+        var instances = {};
+        return function (name) {
+            var instance,
+                def = name || 'flowControl';
+            if (instances.hasOwnProperty(def)) {
+                instance = instances[def];
+            } else {
+                instances[def] = flowControlInstance(def);
+                instance = instances[def];
             }
+            return instance;
         };
     }());
     // export as module or bind to global
-    if (typeof module !== 'undefined') { module.exports = flowControl; } else {canny.add('flowControl', flowControl); }
+    if (typeof module !== 'undefined' && module.hasOwnProperty('exports')) { module.exports = flowControl; } else {canny.add('flowControl', flowControl('flowControl')); }
 
 }());
 
 },{}],4:[function(require,module,exports){
+/*global canny */
+/*jslint browser: true*/
+
+/**
+ * Work in progress - don't use this yet:
+ *  Will try to reload modules there are not registered on canny.
+ *
+ *  Only modules which name is the same name as the file name can be loaded.
+ *
+ *  TODO: require should not parse node which already parsed from canny. Otherwise the
+ *  add method is called twice. Means also that click listeners there added in the add
+ *  phase a registered more than one.
+ *  Maybe call only the add methods from modules there are loaded afterwords.
+ */
+(function () {
+    "use strict";
+    var require = (function () {
+        var fc = {
+                appendScript : function (path, cb) {
+                    var node = document.createElement('script');
+                    node.type = "text/javascript";
+                    node.async = true;
+                    node.setAttribute('src', path);
+                    node.addEventListener('load', cb, false);
+                    document.head.appendChild(node);
+                },
+                appendScriptsToHead : function (urls, cb) {
+                    var path, i, includesScripts = false,
+                        scriptCounter = (function () {
+                            var count = 0;
+                            return {
+                                up : function () {count++; },
+                                ready : function () {
+                                    count--;
+                                    if (count <= 0) {
+                                        cb();
+                                    }
+                                }
+                            };
+                        }());
+
+                    for (i = 0; i < urls.length; i++) {
+                        path = urls[i];
+                        includesScripts = true;
+                        scriptCounter.up();
+                        fc.appendScript(path, scriptCounter.ready);
+                    }
+
+                    if (urls.length === 0 || includesScripts === false) {
+                        cb();
+                    }
+
+                },
+                searchForNoneRegisteredModules : function (node) {
+                    var name = 'canny',
+                        query = [].slice.call(node.querySelectorAll('[' + name + '-mod]')),
+                        returns = {};
+                    query.forEach(function (elem) {
+                        var attribute = elem.getAttribute(name + '-mod'), attributes;
+                        attributes = attribute.split(' ');
+                        attributes.forEach(function (attr) {
+                            if (!canny.hasOwnProperty(attr)) {
+                                returns[attr] = null;
+                            }
+                        });
+                    });
+                    return returns;
+                },
+                getPathNames : function (scriptsObj, path) {
+                    var names = Object.keys(scriptsObj),
+                        urls = [];
+                    names.forEach(function (name) {
+                        urls.push(path + '/' + name + '.js');
+                    });
+                    return urls;
+                }
+            },
+            modViews = {
+                add: function (node, attr) {    // part of api
+                    // TODO is there no extension load it from canny/mod folder
+                    if (attr && attr.hasOwnProperty('ext')) {
+                        fc.appendScriptsToHead(
+                            fc.getPathNames(
+                                fc.searchForNoneRegisteredModules(node),
+                                attr.ext
+                            ),
+                            function () {
+                                console.log('REQUIRE START CANNY PARSE AGAIN', node);
+                                // trigger canny parse because canny can't initialize none registered modules
+                                canny.cannyParse(node, function () {
+                                    console.log('CANNY FROM REQUIRE IS DONE');
+                                }); // init also canny own modules
+                            }
+                        );
+
+                    }
+                    console.log('REQUIRE ADD');
+                }
+//                loadModule : function (name) {
+//                    console.log('LOAD MODULE WITH NAME');
+//                }
+            };
+
+        return modViews;
+    }());
+    // export as module or bind to global
+    if (typeof module !== 'undefined') {
+        module.exports = require;
+    } else {
+        canny.add('require', require);
+    }
+
+}());
+
+},{}],5:[function(require,module,exports){
 var kssNav = function (canny) {
     "use strict";
+    var menuMap = {};
 
+    function handleActiveState(activeNode) {
+        Object.keys(menuMap).forEach(function (key) {
+            menuMap[key].parentNode.classList.remove('kss-active');
+        });
+        activeNode.parentNode.classList.add('kss-active');
+    }
+
+    function handleView(node, view) {
+        menuMap[view] = node;
+        node.addEventListener('click', function () {
+            // TODO scroll body to top
+            canny.flowControl.show(view, function () {
+                handleActiveState(menuMap[view]);
+            });
+        });
+    }
+
+    /**
+     * Adds the first child of the node and append it to the parent of the menu view node.
+     *
+     * @param node
+     * @param view
+     */
+    function handleSubMenu(node, view) {
+        console.log('handleSubMenu');
+        if (menuMap.hasOwnProperty(view) && node.children.length > 0) {
+            menuMap[view].parentNode.appendChild(node.children[0]);
+        }
+    }
     return {
         add : function (node, attr) {
-            node.addEventListener('click', function () {
-                canny.flowControl.show(attr);
-            });
+            if (attr.hasOwnProperty('view')) {
+                handleView(node, attr.view);
+            } else if (attr.hasOwnProperty('subMenu')) {
+                handleSubMenu(node, attr.subMenu);
+            }
         }
     };
 };
 
 module.exports = kssNav;
-},{}],5:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
 var canny = require('canny');
-canny.add('flowControl', require('canny/mod/flowControl'));
+canny.add('flowControl', require('canny/mod/flowControlInstance')('flowControl'));
 canny.add('async', require('canny/mod/async'));
+canny.add('require', require('canny/mod/require'));
 
 // special template modules
 canny.add('kssNav', require('./c-kssNav')(canny));
 
 // public to window
 window.canny = canny;
-},{"./c-kssNav":4,"canny":1,"canny/mod/async":2,"canny/mod/flowControl":3}]},{},[5])
+},{"./c-kssNav":5,"canny":1,"canny/mod/async":2,"canny/mod/flowControlInstance":3,"canny/mod/require":4}]},{},[6])
